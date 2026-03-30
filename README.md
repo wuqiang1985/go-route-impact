@@ -309,7 +309,7 @@ make fmt
 
 | 框架 | 状态 | 说明 |
 |------|------|------|
-| Iris v12 | ✅ 已实现 | Party 树 + mvc.Configure + router.Get/Post + HandlerFuncID |
+| Iris | ✅ 已实现 | Party 树 + mvc.Configure + router.Get/Post + HandlerFuncID |
 | Gin | ✅ 已实现 | gin.Default/New + Group 嵌套 + GET/POST/... + 函数注册追踪 |
 
 框架通过 go.mod 自动检测，也可在 `.route-impact.yaml` 中手动指定。路由提取器采用插件架构（`RouteExtractor` 接口），如需支持其他框架可自行扩展。
