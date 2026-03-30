@@ -25,7 +25,7 @@ var graphCmd = &cobra.Command{
 			return fmt.Errorf("--func is required")
 		}
 
-		cfg, err := config.Load(configFile)
+		cfg, err := config.Load(configFile, projectDir)
 		if err != nil {
 			return fmt.Errorf("load config: %w", err)
 		}

@@ -89,12 +89,14 @@ func (a *Analyzer) buildIndex() error {
 		return fmt.Errorf("get extractor: %w", err)
 	}
 
-	// Check entry point exists before extracting
-	entryPath := filepath.Join(a.ProjectRoot, a.Config.EntryPoint)
-	if _, statErr := os.Stat(entryPath); os.IsNotExist(statErr) {
-		return &UserError{
-			Message: fmt.Sprintf("entry point not found: %s", entryPath),
-			Hint:    "The default entry point is main.go in the project root.\nIf your main.go is in a different location, create a config file:\n  go-route-impact init\nThen edit .route-impact.yaml to set the correct entry_point, e.g.:\n  entry_point: cmd/api/main.go",
+	// Check entry point exists before extracting (only for frameworks that need it)
+	if framework != "gin" {
+		entryPath := filepath.Join(a.ProjectRoot, a.Config.EntryPoint)
+		if _, statErr := os.Stat(entryPath); os.IsNotExist(statErr) {
+			return &UserError{
+				Message: fmt.Sprintf("entry point not found: %s", entryPath),
+				Hint:    "The default entry point is main.go in the project root.\nIf your main.go is in a different location, create a config file:\n  go-route-impact init\nThen edit .route-impact.yaml to set the correct entry_point, e.g.:\n  entry_point: cmd/api/main.go",
+			}
 		}
 	}
 

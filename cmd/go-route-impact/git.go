@@ -24,7 +24,7 @@ var gitCmd = &cobra.Command{
 	Short: "Analyze function-level route impact for git changes",
 	Long:  `Analyzes staged, uncommitted, or branch changes at function level and shows affected routes.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(configFile)
+		cfg, err := config.Load(configFile, projectDir)
 		if err != nil {
 			return fmt.Errorf("load config: %w", err)
 		}

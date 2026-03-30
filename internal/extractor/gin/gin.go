@@ -1,7 +1,6 @@
 package gin
 
 import (
-	"fmt"
 	"go/ast"
 	"go/token"
 	"path/filepath"
@@ -16,256 +15,163 @@ func init() {
 	extractor.Register(&GinExtractor{})
 }
 
-// GinExtractor extracts routes from Gin projects.
+// GinExtractor extracts routes from Gin projects by scanning all Go files.
 //
 // Supported patterns:
 //
-//	r := gin.Default() / gin.New()
-//	r.GET("/path", handler)
-//	r.POST("/path", controller.Method)
-//
-//	v1 := r.Group("/api/v1")
-//	v1.GET("/users", controller.List)
-//
-//	func RegisterRoutes(rg *gin.RouterGroup) {
-//	    rg.GET("/items", ctrl.List)
-//	}
+//  1. Direct: r := gin.Default(); r.GET("/path", handler)
+//  2. Group:  v1 := r.Group("/api"); v1.GET("/users", handler)
+//  3. Struct embed: type App struct { *gin.Engine }; a.Engine.Group(...)
+//  4. Method-based: func (a *App) Router() { group := a.Engine.Group(...); group.GET(...) }
 type GinExtractor struct{}
 
 func (e *GinExtractor) Name() string { return "gin" }
 
-// Extract scans all Go files in the project to find Gin route registrations.
-// Unlike Iris which has a single entry-point pattern, Gin routes can be
-// registered anywhere, so we scan all files.
 func (e *GinExtractor) Extract(projectRoot string, entryPoint string, resolver *astutil.Resolver) ([]model.Route, error) {
-	// Phase 1: Parse entry point to find top-level router and groups.
-	entryPath := filepath.Join(projectRoot, entryPoint)
-	entryFile, _, err := astutil.ParseFullFile(entryPath)
+	// Parse all project files to find Gin route registrations.
+	// Gin routes can be registered anywhere (main, methods, init functions),
+	// so we scan everything rather than just the entry point.
+	parsed, err := astutil.ParseProjectFull(projectRoot, []string{"vendor/", "test/", "testdata/", "docs/"})
 	if err != nil {
-		return nil, fmt.Errorf("parse entry point %s: %w", entryPoint, err)
+		return nil, err
 	}
 
-	// Track engine and group variables with their path prefixes.
-	// e.g., r := gin.Default() → ginVars["r"] = ""
-	//        v1 := r.Group("/api/v1") → ginVars["v1"] = "/api/v1"
-	ginVars := make(map[string]string)
+	var allRoutes []model.Route
 
-	entryAliases := buildImportAliases(entryFile)
+	for _, pf := range parsed {
+		aliases := buildImportAliases(pf.File)
+		relPath, _ := filepath.Rel(projectRoot, pf.FilePath)
+		pkgPath, _ := resolver.FileToPackage(pf.FilePath)
 
-	var mainFunc *ast.FuncDecl
-	for _, decl := range entryFile.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name.Name == "main" {
-			mainFunc = fn
-			break
-		}
-	}
-
-	if mainFunc == nil || mainFunc.Body == nil {
-		return nil, fmt.Errorf("main function not found in %s", entryPoint)
-	}
-
-	var routes []model.Route
-
-	// Walk main function to collect gin engine/group vars and direct routes.
-	routes = append(routes, extractFromBlock(mainFunc.Body, ginVars, "", entryAliases, resolver, projectRoot, entryPoint)...)
-
-	// Phase 2: Find route registration functions called from main.
-	// e.g., routes.Register(r) or registerUserRoutes(v1)
-	routes = append(routes, extractFromFuncCalls(mainFunc.Body, ginVars, entryAliases, resolver, projectRoot)...)
-
-	return routes, nil
-}
-
-// extractFromBlock walks a block statement and extracts gin routes.
-// It tracks Group() calls and direct HTTP method calls.
-func extractFromBlock(body *ast.BlockStmt, ginVars map[string]string, inheritPrefix string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string, file string) []model.Route {
-	if body == nil {
-		return nil
-	}
-
-	var routes []model.Route
-
-	for _, stmt := range body.List {
-		switch s := stmt.(type) {
-		case *ast.AssignStmt:
-			routes = append(routes, handleAssign(s, ginVars, inheritPrefix, aliases, resolver, projectRoot, file)...)
-
-		case *ast.ExprStmt:
-			if call, ok := s.X.(*ast.CallExpr); ok {
-				routes = append(routes, handleCall(call, ginVars, aliases, resolver, projectRoot, file)...)
+		for _, decl := range pf.File.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
 			}
 
-		case *ast.BlockStmt:
-			// Naked block: { v1.GET(...) }
-			routes = append(routes, extractFromBlock(s, ginVars, inheritPrefix, aliases, resolver, projectRoot, file)...)
+			routes := extractRoutesFromFunc(fn, relPath, pkgPath, aliases, resolver, projectRoot)
+			allRoutes = append(allRoutes, routes...)
 		}
 	}
 
-	return routes
+	return allRoutes, nil
 }
 
-// handleAssign processes assignment statements to track gin variables and extract routes.
-func handleAssign(assign *ast.AssignStmt, ginVars map[string]string, inheritPrefix string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string, file string) []model.Route {
-	if len(assign.Lhs) < 1 || len(assign.Rhs) < 1 {
+// extractRoutesFromFunc extracts Gin routes from a single function/method body.
+// It tracks Group() assignments and collects HTTP method registrations.
+func extractRoutesFromFunc(fn *ast.FuncDecl, file string, pkgPath string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string) []model.Route {
+	if fn.Body == nil {
 		return nil
 	}
 
-	ident, ok := assign.Lhs[0].(*ast.Ident)
-	if !ok {
-		return nil
-	}
+	// groupVars tracks variable → path prefix.
+	// Seed with known engine-like variables that have empty prefix.
+	groupVars := make(map[string]string)
 
-	rhs := assign.Rhs[0]
-	call, ok := rhs.(*ast.CallExpr)
-	if !ok {
-		return nil
-	}
-
-	// Check for gin.Default() / gin.New()
-	if isGinInit(call, aliases) {
-		ginVars[ident.Name] = inheritPrefix
-		return nil
-	}
-
-	// Check for r.Group("/prefix") or v1.Group("/prefix")
-	if prefix, base, ok := isGroupCall(call, ginVars); ok {
-		ginVars[ident.Name] = base + prefix
-		return nil
-	}
-
-	return nil
-}
-
-// handleCall processes a function call that may be a route registration.
-func handleCall(call *ast.CallExpr, ginVars map[string]string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string, file string) []model.Route {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return nil
-	}
-
-	methodName := sel.Sel.Name
-
-	// Check for HTTP method calls: r.GET, v1.POST, etc.
-	if isHTTPMethod(methodName) {
-		return handleHTTPRoute(call, sel, ginVars, aliases, resolver, projectRoot, file)
-	}
-
-	return nil
-}
-
-// handleHTTPRoute extracts route info from r.GET("/path", handler) calls.
-func handleHTTPRoute(call *ast.CallExpr, sel *ast.SelectorExpr, ginVars map[string]string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string, file string) []model.Route {
-	if len(call.Args) < 2 {
-		return nil
-	}
-
-	// Identify the receiver variable
-	prefix := ""
-	if varIdent, ok := sel.X.(*ast.Ident); ok {
-		if p, exists := ginVars[varIdent.Name]; exists {
-			prefix = p
-		}
-	}
-
-	routePath := extractStringLit(call.Args[0])
-	if routePath == "" {
-		return nil
-	}
-
-	fullPath := prefix + routePath
-	method := strings.ToUpper(sel.Sel.Name)
-	if method == "ANY" {
-		method = "ANY"
-	}
-
-	// The handler is the last argument (Gin allows middleware before handler)
-	handlerExpr := call.Args[len(call.Args)-1]
-	handler := extractHandlerName(handlerExpr)
-	handlerFuncID := resolveHandlerFuncID(handlerExpr, aliases, resolver, projectRoot)
-
-	relFile, _ := filepath.Rel(projectRoot, filepath.Join(projectRoot, file))
-	pkgPath, _ := resolver.FileToPackage(filepath.Join(projectRoot, file))
-
-	return []model.Route{{
-		Method:        method,
-		Path:          fullPath,
-		Handler:       handler,
-		File:          relFile,
-		Package:       pkgPath,
-		HandlerFuncID: handlerFuncID,
-	}}
-}
-
-// extractFromFuncCalls finds calls like registerRoutes(r) or pkg.Setup(v1)
-// in the main function body, then follows them to extract routes.
-func extractFromFuncCalls(body *ast.BlockStmt, ginVars map[string]string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string) []model.Route {
-	if body == nil {
-		return nil
-	}
+	// Collect controller variable types for handler FuncID resolution.
+	ctrlTypes := make(map[string]ctrlVar)
 
 	var routes []model.Route
 
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+	// Two-pass: first collect all group and variable assignments, then collect routes.
+	// Pass 1: scan all assignments
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) < 1 || len(assign.Rhs) < 1 {
+			return true
+		}
+
+		ident, ok := assign.Lhs[0].(*ast.Ident)
 		if !ok {
 			return true
 		}
 
-		// pkg.SetupRoutes(r) or pkg.SetupRoutes(v1)
-		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		ident, isIdent := call.Fun.(*ast.Ident)
+		rhs := assign.Rhs[0]
 
-		var funcName, pkgAlias string
-		if isSel {
-			if pkgId, ok := sel.X.(*ast.Ident); ok {
-				pkgAlias = pkgId.Name
-				funcName = sel.Sel.Name
+		// Check for gin.Default() / gin.New()
+		if call, ok := rhs.(*ast.CallExpr); ok {
+			if isGinInit(call, aliases) {
+				groupVars[ident.Name] = ""
+				return true
 			}
-		} else if isIdent {
-			funcName = ident.Name
 		}
 
-		if funcName == "" {
-			return true
+		// Check for x.Engine.Group("/prefix") or x.Group("/prefix")
+		if call, ok := rhs.(*ast.CallExpr); ok {
+			if prefix, ok := extractGroupPrefix(call, groupVars); ok {
+				groupVars[ident.Name] = prefix
+				return true
+			}
 		}
 
-		// Skip known non-route functions
-		if isGinInit(call, aliases) {
-			return true
+		// Check for &pkg.Type{} controller assignments
+		actualRhs := rhs
+		if unary, ok := actualRhs.(*ast.UnaryExpr); ok && unary.Op.String() == "&" {
+			actualRhs = unary.X
 		}
-		if _, _, ok := isGroupCall(call, ginVars); ok {
-			return true
-		}
-		if isHTTPMethod(funcName) {
-			return true // already handled
-		}
-
-		// Check if any argument is a gin variable
-		argPrefix := ""
-		foundGinArg := false
-		for _, arg := range call.Args {
-			if argIdent, ok := arg.(*ast.Ident); ok {
-				if p, exists := ginVars[argIdent.Name]; exists {
-					argPrefix = p
-					foundGinArg = true
-					break
+		if comp, ok := actualRhs.(*ast.CompositeLit); ok {
+			if sel, ok := comp.Type.(*ast.SelectorExpr); ok {
+				if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+					importPath := pkgIdent.Name
+					if full, exists := aliases[pkgIdent.Name]; exists {
+						importPath = full
+					}
+					ctrlTypes[ident.Name] = ctrlVar{pkg: importPath, typeName: sel.Sel.Name}
 				}
 			}
+			// Local type: Type{}
+			if localIdent, ok := comp.Type.(*ast.Ident); ok {
+				ctrlTypes[ident.Name] = ctrlVar{pkg: pkgPath, typeName: localIdent.Name}
+			}
 		}
 
-		if !foundGinArg {
+		return true
+	})
+
+	// Pass 2: find all HTTP method calls
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) < 2 {
 			return true
 		}
 
-		// Resolve the function and extract routes from it
-		var importPath string
-		if pkgAlias != "" {
-			importPath = aliases[pkgAlias]
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
 		}
 
-		funcRoutes := resolveGinRouteFunc(funcName, importPath, argPrefix, aliases, resolver, projectRoot)
-		routes = append(routes, funcRoutes...)
+		methodName := sel.Sel.Name
+		if !isHTTPMethod(methodName) {
+			return true
+		}
+
+		// Determine the path prefix from the receiver
+		prefix, found := resolvePrefix(sel.X, groupVars)
+		if !found {
+			return true
+		}
+
+		routePath := extractStringLit(call.Args[0])
+		if routePath == "" {
+			return true
+		}
+
+		fullPath := prefix + routePath
+		method := strings.ToUpper(methodName)
+
+		// Handler is the last argument
+		handlerExpr := call.Args[len(call.Args)-1]
+		handler := extractHandlerName(handlerExpr)
+		handlerFuncID := resolveHandlerFuncID(handlerExpr, aliases, ctrlTypes, pkgPath, resolver)
+
+		routes = append(routes, model.Route{
+			Method:        method,
+			Path:          fullPath,
+			Handler:       handler,
+			File:          file,
+			Package:       pkgPath,
+			HandlerFuncID: handlerFuncID,
+		})
 
 		return true
 	})
@@ -273,126 +179,116 @@ func extractFromFuncCalls(body *ast.BlockStmt, ginVars map[string]string, aliase
 	return routes
 }
 
-// resolveGinRouteFunc finds a function by name in the given package and extracts routes from it.
-func resolveGinRouteFunc(funcName string, importPath string, prefix string, aliases map[string]string, resolver *astutil.Resolver, projectRoot string) []model.Route {
-	var searchDir string
-	if importPath != "" && resolver.IsInternal(importPath) {
-		searchDir = resolver.PackageToDir(importPath)
-	} else {
-		// Local function, search in project root
-		searchDir = projectRoot
-	}
-
-	if searchDir == "" {
-		return nil
-	}
-
-	pattern := filepath.Join(searchDir, "*.go")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil
-	}
-
-	for _, filePath := range matches {
-		if strings.HasSuffix(filePath, "_test.go") {
-			continue
+// resolvePrefix resolves the path prefix from a call receiver expression.
+// Handles: group (ident), a.Engine (selector), etc.
+func resolvePrefix(expr ast.Expr, groupVars map[string]string) (string, bool) {
+	switch x := expr.(type) {
+	case *ast.Ident:
+		// group.GET(...) or r.POST(...)
+		if prefix, ok := groupVars[x.Name]; ok {
+			return prefix, true
 		}
 
-		f, _, err := astutil.ParseFullFile(filePath)
-		if err != nil {
-			continue
+	case *ast.SelectorExpr:
+		// a.Engine.GET(...) — the Engine field on a struct that embeds *gin.Engine
+		if x.Sel.Name == "Engine" {
+			return "", true
 		}
+	}
 
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != funcName || fn.Body == nil {
-				continue
+	return "", false
+}
+
+// extractGroupPrefix extracts the prefix from a Group() call.
+// Handles:
+//   - group.Group("/prefix")
+//   - a.Engine.Group("/prefix")
+//   - a.Group("/prefix")   (embedded engine)
+func extractGroupPrefix(call *ast.CallExpr, groupVars map[string]string) (string, bool) {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "Group" {
+		return "", false
+	}
+
+	prefix := ""
+	if len(call.Args) >= 1 {
+		prefix = extractStringLit(call.Args[0])
+	}
+
+	// Check receiver
+	basePrefix, found := resolvePrefix(sel.X, groupVars)
+	if found {
+		return basePrefix + prefix, true
+	}
+
+	// a.Engine.Group() — sel.X is a.Engine (SelectorExpr)
+	if inner, ok := sel.X.(*ast.SelectorExpr); ok {
+		if inner.Sel.Name == "Engine" {
+			return prefix, true
+		}
+	}
+
+	return "", false
+}
+
+type ctrlVar struct {
+	pkg      string
+	typeName string
+}
+
+// resolveHandlerFuncID resolves a handler expression to a FuncID.
+func resolveHandlerFuncID(expr ast.Expr, aliases map[string]string, ctrlTypes map[string]ctrlVar, currentPkg string, resolver *astutil.Resolver) model.FuncID {
+	switch e := expr.(type) {
+	case *ast.SelectorExpr:
+		if varIdent, ok := e.X.(*ast.Ident); ok {
+			methodName := e.Sel.Name
+
+			// Known controller variable
+			if cv, ok := ctrlTypes[varIdent.Name]; ok {
+				return model.FuncID{Pkg: cv.pkg, Receiver: cv.typeName, Name: methodName}
 			}
 
-			// Determine the parameter name used for the gin engine/group
-			paramVars := make(map[string]string)
-			if fn.Type.Params != nil {
-				for _, param := range fn.Type.Params.List {
-					for _, name := range param.Names {
-						// Check if param type is *gin.Engine, *gin.RouterGroup, or gin.IRouter etc.
-						if isGinRouterType(param.Type) {
-							paramVars[name.Name] = prefix
-						}
-					}
+			// Package function: pkg.Handler
+			if importPath, ok := aliases[varIdent.Name]; ok {
+				if resolver.IsInternal(importPath) {
+					return model.FuncID{Pkg: importPath, Name: methodName}
 				}
 			}
 
-			if len(paramVars) == 0 {
-				continue
-			}
-
-			fileAliases := buildImportAliases(f)
-			relPath, _ := filepath.Rel(projectRoot, filePath)
-
-			return extractFromBlock(fn.Body, paramVars, prefix, fileAliases, resolver, projectRoot, relPath)
+			// Fallback: treat as variable.Method
+			return model.FuncID{Pkg: currentPkg, Receiver: varIdent.Name, Name: methodName}
 		}
+
+	case *ast.Ident:
+		return model.FuncID{Pkg: currentPkg, Name: e.Name}
 	}
 
-	return nil
+	return model.FuncID{}
 }
 
-// isGinInit checks if a call is gin.Default() or gin.New().
 func isGinInit(call *ast.CallExpr, aliases map[string]string) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
-
 	pkgIdent, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return false
 	}
-
-	// Check if the package is "gin" (by alias or import path)
 	if !isGinPackage(pkgIdent.Name, aliases) {
 		return false
 	}
-
 	return sel.Sel.Name == "Default" || sel.Sel.Name == "New"
 }
 
-// isGroupCall checks if a call is r.Group("/prefix").
-// Returns (prefix, basePrefix, true) if it is.
-func isGroupCall(call *ast.CallExpr, ginVars map[string]string) (string, string, bool) {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok || sel.Sel.Name != "Group" {
-		return "", "", false
-	}
-
-	varIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return "", "", false
-	}
-
-	base, exists := ginVars[varIdent.Name]
-	if !exists {
-		return "", "", false
-	}
-
-	if len(call.Args) < 1 {
-		return "", base, true
-	}
-
-	prefix := extractStringLit(call.Args[0])
-	return prefix, base, true
-}
-
-// isHTTPMethod checks if the method name is an HTTP method in Gin.
 func isHTTPMethod(name string) bool {
 	switch name {
-	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Any",
-		"Handle":
+	case "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Any", "Handle":
 		return true
 	}
 	return false
 }
 
-// isGinPackage checks if the alias refers to the gin package.
 func isGinPackage(alias string, aliases map[string]string) bool {
 	if alias == "gin" {
 		return true
@@ -401,75 +297,6 @@ func isGinPackage(alias string, aliases map[string]string) bool {
 		return strings.Contains(importPath, "gin-gonic/gin") || strings.HasSuffix(importPath, "/gin")
 	}
 	return false
-}
-
-// isGinRouterType checks if a type expression looks like a Gin router type.
-// Matches: *gin.Engine, *gin.RouterGroup, gin.IRouter, gin.IRoutes
-func isGinRouterType(expr ast.Expr) bool {
-	// Unwrap pointer
-	if star, ok := expr.(*ast.StarExpr); ok {
-		expr = star.X
-	}
-
-	sel, ok := expr.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-
-	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return false
-	}
-
-	if pkgIdent.Name != "gin" {
-		return false
-	}
-
-	switch sel.Sel.Name {
-	case "Engine", "RouterGroup", "IRouter", "IRoutes":
-		return true
-	}
-	return false
-}
-
-// resolveHandlerFuncID resolves a handler expression to a FuncID.
-// Handles:
-//
-//	controller.Method → pkg.ControllerType.Method
-//	pkg.Function      → pkg.Function
-//	localFunc         → current pkg function
-func resolveHandlerFuncID(expr ast.Expr, aliases map[string]string, resolver *astutil.Resolver, projectRoot string) model.FuncID {
-	switch e := expr.(type) {
-	case *ast.SelectorExpr:
-		if pkgOrVar, ok := e.X.(*ast.Ident); ok {
-			methodName := e.Sel.Name
-
-			// Check if it's a package function: pkg.Handler
-			if importPath, ok := aliases[pkgOrVar.Name]; ok {
-				if resolver.IsInternal(importPath) {
-					return model.FuncID{
-						Pkg:  importPath,
-						Name: methodName,
-					}
-				}
-			}
-
-			// Otherwise it's varName.Method → need to resolve varName type
-			// We return a partial FuncID; the callgraph builder will resolve it
-			return model.FuncID{
-				Receiver: pkgOrVar.Name,
-				Name:     methodName,
-			}
-		}
-
-	case *ast.Ident:
-		// Local function
-		return model.FuncID{
-			Name: e.Name,
-		}
-	}
-
-	return model.FuncID{}
 }
 
 func extractStringLit(expr ast.Expr) string {

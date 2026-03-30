@@ -17,7 +17,7 @@ var routesCmd = &cobra.Command{
 	Use:   "routes",
 	Short: "List all routes in the project",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load(configFile)
+		cfg, err := config.Load(configFile, projectDir)
 		if err != nil {
 			return fmt.Errorf("load config: %w", err)
 		}

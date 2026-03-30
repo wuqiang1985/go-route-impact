@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
@@ -31,9 +32,19 @@ func DefaultConfig() *Config {
 
 // Load reads the config from a YAML file.
 // If the file doesn't exist, returns the default config.
-func Load(path string) (*Config, error) {
+// projectRoot is used to find .route-impact.yaml when path is empty.
+func Load(path string, projectRoot string) (*Config, error) {
 	if path == "" {
-		path = DefaultConfigFile
+		// Try project root first, then current directory
+		if projectRoot != "" {
+			candidate := filepath.Join(projectRoot, DefaultConfigFile)
+			if _, err := os.Stat(candidate); err == nil {
+				path = candidate
+			}
+		}
+		if path == "" {
+			path = DefaultConfigFile
+		}
 	}
 
 	data, err := os.ReadFile(path)
