@@ -1,19 +1,14 @@
-# go-route-impact v2
+# go-route-impact
 
-**函数级**路由影响分析 CLI 工具。修改一个函数后，精确告诉你"本次修改影响了哪些 API 接口"。
+Go 项目**函数级**路由影响分析 CLI 工具。修改一个函数后，精确告诉你"本次修改影响了哪些 API 接口"。
 
-## v1 vs v2
+## 它解决什么问题
 
-v1 是**文件级**分析——改了文件中任意一行，就报出该文件所有关联路由。实际中一个 service 文件可能有 33 个方法，改其中一个只影响 1-2 条路由，文件级会大量误报。
-
-v2 升级为**函数调用图**级分析：
+在 Go Web 项目中，修改一个底层函数（service 方法、repository 方法），很难快速知道会影响到哪些 HTTP 路由。go-route-impact 通过 **AST 静态分析** 构建函数级调用图，从修改的函数出发 **BFS 反向遍历**，只找到真正调用链上的 controller 方法，映射到精确路由。
 
 ```
-v1: 改 service/game_info.go      → import 链 → 118 routes (整个文件)
-v2: 改 GetGameEnvConfig() 函数体  → 调用图   →   2 routes (精确到函数)
+改 GetGameEnvConfig() 函数体某行 → 调用图追踪 → 2 routes (精确到函数)
 ```
-
-**精确度提升 59 倍。**
 
 ## 快速开始
 
@@ -173,9 +168,9 @@ go-route-impact --config path/to/config     # 指定配置文件
    • 输出完整调用链
 ```
 
-### 类型推断策略（轻量级，不依赖编译）
+### 类型推断策略
 
-不做完整类型检查器，针对项目实际模式：
+轻量级类型推断，不依赖编译，针对项目实际模式：
 
 ```go
 // 模式 1: struct field 调用链
@@ -188,7 +183,6 @@ func (r *GameInfoController) GetEnvConfig(ctx iris.Context) {
 
 // 模式 2: 变量赋值 + New 命名约定
 service := services.NewGameInfoService(repos)  // → service 类型 = gameInfoService
-controller := &controllers.GameInfoController{Service: service}
 
 // 模式 3: 接口 → 实现映射
 // GameInfoService (interface) → gameInfoService (concrete struct)
@@ -247,10 +241,10 @@ go-route-impact-v2/
 │   ├── hook.go                  # hook install/uninstall
 │   └── init.go                  # init 生成配置
 ├── internal/
-│   ├── callgraph/               # 🆕 函数级调用图
+│   ├── callgraph/               # 函数级调用图
 │   │   ├── builder.go           # AST 扫描、提取调用目标、接口解析
 │   │   └── graph.go             # 正向+反向调用图、BFS 查找
-│   ├── typeinfer/               # 🆕 轻量类型推断
+│   ├── typeinfer/               # 轻量类型推断
 │   │   └── infer.go             # struct field 类型、变量赋值类型
 │   ├── astutil/                 # AST 工具
 │   │   ├── parser.go            # 全量 AST 并行解析（16 并发）
@@ -259,7 +253,7 @@ go-route-impact-v2/
 │   ├── extractor/               # 路由提取器（插件架构）
 │   │   ├── extractor.go         # RouteExtractor 接口
 │   │   ├── registry.go          # 框架注册表
-│   │   └── iris/iris.go         # Iris v12 提取器（增强：记录 handler FuncID）
+│   │   └── iris/iris.go         # Iris v12 提取器（记录 handler FuncID）
 │   ├── analyzer/                # 核心协调器
 │   │   ├── analyzer.go          # 组合 callgraph + extractor
 │   │   └── impact.go            # 函数级 BFS 影响分析
