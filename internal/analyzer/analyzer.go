@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/wuqiang1985/go-route-impact/internal/astutil"
@@ -31,6 +32,14 @@ func New(projectRoot string, cfg *config.Config) (*Analyzer, error) {
 	absRoot, err := filepath.Abs(projectRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resolve project root: %w", err)
+	}
+
+	// Check go.mod exists
+	goModPath := filepath.Join(absRoot, "go.mod")
+	if _, err := os.Stat(goModPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("go.mod not found in %s\n\n"+
+			"Please run from the project root directory, or use --project to specify it:\n"+
+			"  go-route-impact --project /path/to/your/project <command>", absRoot)
 	}
 
 	resolver, err := astutil.NewResolver(absRoot)
@@ -77,6 +86,17 @@ func (a *Analyzer) buildIndex() error {
 	ext, err := extractor.Get(framework)
 	if err != nil {
 		return fmt.Errorf("get extractor: %w", err)
+	}
+
+	// Check entry point exists before extracting
+	entryPath := filepath.Join(a.ProjectRoot, a.Config.EntryPoint)
+	if _, statErr := os.Stat(entryPath); os.IsNotExist(statErr) {
+		return fmt.Errorf("entry point not found: %s\n\n"+
+			"The default entry point is main.go in the project root.\n"+
+			"If your main.go is in a different location, create a config file:\n"+
+			"  go-route-impact init\n"+
+			"Then edit .route-impact.yaml to set the correct entry_point, e.g.:\n"+
+			"  entry_point: cmd/api/main.go", entryPath)
 	}
 
 	routes, err := ext.Extract(a.ProjectRoot, a.Config.EntryPoint, a.Resolver)
