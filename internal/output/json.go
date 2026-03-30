@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"io"
 
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // PrintRoutesJSON writes routes as JSON.

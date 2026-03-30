@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // PrintRoutesMarkdown writes routes as a Markdown table.

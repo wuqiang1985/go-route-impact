@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pnt-team/go-route-impact-v2/internal/analyzer"
-	"github.com/pnt-team/go-route-impact-v2/internal/config"
-	"github.com/pnt-team/go-route-impact-v2/internal/output"
+	"github.com/wuqiang1985/go-route-impact/internal/analyzer"
+	"github.com/wuqiang1985/go-route-impact/internal/config"
+	"github.com/wuqiang1985/go-route-impact/internal/output"
 )
 
 var routesFormat string

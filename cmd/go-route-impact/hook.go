@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/pnt-team/go-route-impact-v2/internal/gitutil"
+	"github.com/wuqiang1985/go-route-impact/internal/gitutil"
 )
 
 var hookCmd = &cobra.Command{

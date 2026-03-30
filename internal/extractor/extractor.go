@@ -1,8 +1,8 @@
 package extractor
 
 import (
-	"github.com/pnt-team/go-route-impact-v2/internal/astutil"
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/internal/astutil"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // RouteExtractor extracts HTTP routes from a Go web project.

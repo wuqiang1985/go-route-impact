@@ -1,7 +1,7 @@
 package callgraph
 
 import (
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // Graph represents a function-level call graph.

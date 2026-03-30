@@ -1,5 +1,5 @@
 BINARY := go-route-impact
-MODULE := github.com/pnt-team/go-route-impact-v2
+MODULE := github.com/wuqiang1985/go-route-impact
 CMD := ./cmd/go-route-impact
 
 .PHONY: build install test clean

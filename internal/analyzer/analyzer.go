@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/pnt-team/go-route-impact-v2/internal/astutil"
-	"github.com/pnt-team/go-route-impact-v2/internal/callgraph"
-	"github.com/pnt-team/go-route-impact-v2/internal/config"
-	"github.com/pnt-team/go-route-impact-v2/internal/extractor"
-	_ "github.com/pnt-team/go-route-impact-v2/internal/extractor/gin"  // register gin extractor
-	_ "github.com/pnt-team/go-route-impact-v2/internal/extractor/iris" // register iris extractor
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/internal/astutil"
+	"github.com/wuqiang1985/go-route-impact/internal/callgraph"
+	"github.com/wuqiang1985/go-route-impact/internal/config"
+	"github.com/wuqiang1985/go-route-impact/internal/extractor"
+	_ "github.com/wuqiang1985/go-route-impact/internal/extractor/gin"  // register gin extractor
+	_ "github.com/wuqiang1985/go-route-impact/internal/extractor/iris" // register iris extractor
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // Analyzer is the core coordinator that combines callgraph + extractor.

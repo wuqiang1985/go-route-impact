@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/pnt-team/go-route-impact-v2/internal/astutil"
-	"github.com/pnt-team/go-route-impact-v2/internal/extractor"
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/internal/astutil"
+	"github.com/wuqiang1985/go-route-impact/internal/extractor"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 func init() {

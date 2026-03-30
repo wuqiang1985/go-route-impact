@@ -5,9 +5,9 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/pnt-team/go-route-impact-v2/internal/astutil"
-	"github.com/pnt-team/go-route-impact-v2/internal/typeinfer"
-	"github.com/pnt-team/go-route-impact-v2/pkg/model"
+	"github.com/wuqiang1985/go-route-impact/internal/astutil"
+	"github.com/wuqiang1985/go-route-impact/internal/typeinfer"
+	"github.com/wuqiang1985/go-route-impact/pkg/model"
 )
 
 // Builder constructs a function-level call graph from parsed Go files.

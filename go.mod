@@ -1,4 +1,4 @@
-module github.com/pnt-team/go-route-impact-v2
+module github.com/wuqiang1985/go-route-impact
 
 go 1.25.0
 
