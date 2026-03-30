@@ -8,6 +8,7 @@ import (
 	"github.com/pnt-team/go-route-impact-v2/internal/callgraph"
 	"github.com/pnt-team/go-route-impact-v2/internal/config"
 	"github.com/pnt-team/go-route-impact-v2/internal/extractor"
+	_ "github.com/pnt-team/go-route-impact-v2/internal/extractor/gin"  // register gin extractor
 	_ "github.com/pnt-team/go-route-impact-v2/internal/extractor/iris" // register iris extractor
 	"github.com/pnt-team/go-route-impact-v2/pkg/model"
 )
@@ -67,7 +68,10 @@ func (a *Analyzer) buildIndex() error {
 	// Step 3: Extract routes (with handler FuncID)
 	framework := a.Config.Framework
 	if framework == "auto" {
-		framework = "iris"
+		framework = extractor.DetectFramework(a.ProjectRoot)
+		if framework == "" {
+			framework = "iris" // fallback
+		}
 	}
 
 	ext, err := extractor.Get(framework)
