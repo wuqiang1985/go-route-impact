@@ -310,8 +310,8 @@ make fmt
 | 框架 | 状态 | 说明 |
 |------|------|------|
 | Iris v12 | ✅ 已实现 | Party 树 + mvc.Configure + router.Get/Post + HandlerFuncID |
-| Gin | 🔜 计划中 | 实现 `RouteExtractor` 接口即可 |
-| Echo | 🔜 计划中 | |
+
+路由提取器采用插件架构（`RouteExtractor` 接口），如需支持其他框架可自行扩展。
 
 ## License
 
