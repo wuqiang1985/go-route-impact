@@ -28,6 +28,7 @@ which HTTP routes are affected by code changes.`,
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&projectDir, "project", "p", ".", "Project root directory")
 	rootCmd.PersistentFlags().StringVarP(&configFile, "config", "c", "", "Config file path (default: .route-impact.yaml)")
+	rootCmd.CompletionOptions.HiddenDefaultCmd = true
 
 	rootCmd.AddCommand(checkCmd)
 	rootCmd.AddCommand(routesCmd)
