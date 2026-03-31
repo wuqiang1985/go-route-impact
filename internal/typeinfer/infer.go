@@ -36,13 +36,19 @@ func StructFieldTypes(file *ast.File) map[string]map[string]TypeInfo {
 
 			fields := make(map[string]TypeInfo)
 			for _, field := range structType.Fields.List {
-				if len(field.Names) == 0 {
+				ti := resolveTypeExpr(field.Type)
+				if ti.TypeName == "" {
 					continue
 				}
-				fieldName := field.Names[0].Name
-				ti := resolveTypeExpr(field.Type)
-				if ti.TypeName != "" {
+
+				if len(field.Names) > 0 {
+					// Named field: Service *services.GameInfoService
+					fieldName := field.Names[0].Name
 					fields[fieldName] = ti
+				} else {
+					// Embedded field: *userGroupSvc.UserGroupSvc
+					// In Go, the field name is the type name (e.g., UserGroupSvc)
+					fields[ti.TypeName] = ti
 				}
 			}
 
